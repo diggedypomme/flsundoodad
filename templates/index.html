@@ -1,0 +1,801 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FLSUN QQS-Pro Control</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: #333;
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        h1 {
+            color: white;
+            text-align: center;
+            margin-bottom: 30px;
+            font-size: 2.5em;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            grid-template-rows: 460px 460px auto;
+            grid-template-areas:
+                "status temp    movement"
+                "status upload  print"
+                "terminal terminal terminal";
+            gap: 20px;
+        }
+
+        .card--status   { grid-area: status; }
+        .card--temp     { grid-area: temp; }
+        .card--movement { grid-area: movement; }
+        .card--upload   { grid-area: upload; }
+        .card--print    { grid-area: print; }
+        .card--terminal { grid-area: terminal; }
+
+        @media (max-width: 1200px) {
+            .grid {
+                grid-template-columns: 1fr 1fr;
+                grid-template-rows: auto;
+                grid-template-areas:
+                    "status temp"
+                    "status movement"
+                    "print  upload"
+                    "terminal terminal";
+            }
+            .card { height: auto; min-height: 300px; }
+            .card--status { min-height: 620px; }
+        }
+
+        @media (max-width: 768px) {
+            .grid {
+                grid-template-columns: 1fr;
+                grid-template-rows: auto;
+                grid-template-areas:
+                    "status"
+                    "temp"
+                    "movement"
+                    "print"
+                    "upload"
+                    "terminal";
+            }
+            .card, .card--status { min-height: 0; }
+        }
+
+        .card {
+            background: white;
+            border-radius: 12px;
+            padding: 25px;
+            box-shadow: 0 8px 16px rgba(0,0,0,0.2);
+            height: 100%;
+            overflow-y: auto;
+        }
+
+        .card h2 {
+            color: #667eea;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #667eea;
+            font-size: 1.5em;
+        }
+
+        .status-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 15px;
+        }
+
+        .status-item {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 8px;
+            border-left: 4px solid #667eea;
+            min-height: 70px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+        }
+
+        .status-label {
+            font-size: 0.9em;
+            color: #666;
+            margin-bottom: 5px;
+        }
+
+        .status-value {
+            font-size: 1.4em;
+            font-weight: bold;
+            color: #333;
+            min-width: 150px;
+            display: inline-block;
+        }
+
+        .temp-display {
+            font-size: 2em;
+            font-weight: bold;
+            color: #667eea;
+            text-align: center;
+            margin: 10px 0;
+        }
+
+        .temp-controls {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            margin-top: 15px;
+        }
+
+        input[type="number"] {
+            flex: 1;
+            padding: 10px;
+            border: 2px solid #ddd;
+            border-radius: 6px;
+            font-size: 1em;
+        }
+
+        input[type="number"]:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        button {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 1em;
+            font-weight: bold;
+            transition: background 0.3s, transform 0.1s;
+        }
+
+        button:hover {
+            background: #5568d3;
+            transform: scale(1.05);
+        }
+
+        button:active {
+            transform: scale(0.95);
+        }
+
+        button.danger {
+            background: #e74c3c;
+        }
+
+        button.danger:hover {
+            background: #c0392b;
+        }
+
+        button.success {
+            background: #27ae60;
+        }
+
+        button.success:hover {
+            background: #229954;
+        }
+
+        .button-group {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+            gap: 10px;
+            margin-top: 15px;
+        }
+
+        .jog-control {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 10px;
+            margin: 20px 0;
+        }
+
+        .jog-btn {
+            padding: 20px;
+            font-size: 1.2em;
+        }
+
+        .jog-btn:nth-child(2) { grid-column: 2; }
+        .jog-btn:nth-child(5) { grid-column: 1 / -1; }
+
+        .upload-area {
+            border: 3px dashed #667eea;
+            border-radius: 8px;
+            padding: 30px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s;
+            background: #f8f9fa;
+        }
+
+        .upload-area:hover {
+            background: #e9ecef;
+            border-color: #5568d3;
+        }
+
+        .upload-area.dragover {
+            background: #667eea;
+            color: white;
+        }
+
+        input[type="file"] {
+            display: none;
+        }
+
+        .file-list {
+            max-height: 300px;
+            overflow-y: auto;
+            margin-top: 15px;
+        }
+
+        .file-item {
+            padding: 12px;
+            background: #f8f9fa;
+            margin-bottom: 8px;
+            border-radius: 6px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .file-item:hover {
+            background: #e9ecef;
+        }
+
+        .terminal {
+            background: #1e1e1e;
+            color: #00ff00;
+            padding: 15px;
+            border-radius: 6px;
+            font-family: 'Courier New', monospace;
+            min-height: 200px;
+            max-height: 400px;
+            overflow-y: auto;
+            margin-top: 15px;
+        }
+
+        .terminal-input {
+            display: flex;
+            gap: 10px;
+            margin-top: 10px;
+        }
+
+        .terminal-input input {
+            flex: 1;
+            background: #2d2d2d;
+            color: #00ff00;
+            border: 1px solid #444;
+            padding: 10px;
+            font-family: 'Courier New', monospace;
+        }
+
+        .alert {
+            padding: 15px;
+            border-radius: 6px;
+            margin-bottom: 15px;
+            display: none;
+        }
+
+        .alert.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+
+        .alert.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>FLSUN QQS-Pro Control Panel</h1>
+
+        <div id="alert" class="alert"></div>
+
+        <div class="grid">
+            <!-- Status Card -->
+            <div class="card">
+                <h2>Printer Status</h2>
+                <div class="status-grid">
+                    <div class="status-item">
+                        <div class="status-label">State</div>
+                        <div class="status-value" id="printer-state">--</div>
+                    </div>
+                    <div class="status-item">
+                        <div class="status-label">Firmware</div>
+                        <div class="status-value" id="firmware">--</div>
+                    </div>
+                    <div class="status-item">
+                        <div class="status-label">Position X</div>
+                        <div class="status-value" id="pos-x">--</div>
+                    </div>
+                    <div class="status-item">
+                        <div class="status-label">Position Y</div>
+                        <div class="status-value" id="pos-y">--</div>
+                    </div>
+                    <div class="status-item" style="grid-column: 1 / -1;">
+                        <div class="status-label">Position Z</div>
+                        <div class="status-value" id="pos-z">--</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Temperature Card -->
+            <div class="card">
+                <h2>Temperature</h2>
+                <div>
+                    <div class="status-label">Hotend</div>
+                    <div class="temp-display" id="temp-hotend">--°C</div>
+                    <div class="temp-controls">
+                        <input type="number" id="hotend-target" placeholder="Target °C" min="0" max="300" value="200">
+                        <button onclick="setHotendTemp()">Set</button>
+                        <button onclick="setHotendTemp(0)">Off</button>
+                    </div>
+                </div>
+                <div style="margin-top: 20px;">
+                    <div class="status-label">Bed</div>
+                    <div class="temp-display" id="temp-bed">--°C</div>
+                    <div class="temp-controls">
+                        <input type="number" id="bed-target" placeholder="Target °C" min="0" max="120" value="60">
+                        <button onclick="setBedTemp()">Set</button>
+                        <button onclick="setBedTemp(0)">Off</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Movement Card -->
+            <div class="card">
+                <h2>Movement Control</h2>
+                <div class="button-group">
+                    <button onclick="home()">Home All</button>
+                    <button onclick="home('X')">Home X</button>
+                    <button onclick="home('Y')">Home Y</button>
+                    <button onclick="home('Z')">Home Z</button>
+                </div>
+                <div style="margin-top: 20px;">
+                    <div class="status-label">Quick Move Z</div>
+                    <div class="button-group">
+                        <button onclick="moveZ(10)">+10mm</button>
+                        <button onclick="moveZ(1)">+1mm</button>
+                        <button onclick="moveZ(0.1)">+0.1mm</button>
+                        <button onclick="moveZ(-0.1)">-0.1mm</button>
+                        <button onclick="moveZ(-1)">-1mm</button>
+                        <button onclick="moveZ(-10)">-10mm</button>
+                    </div>
+                </div>
+                <div style="margin-top: 20px;">
+                    <div class="status-label">Extrude / Retract</div>
+                    <div class="button-group">
+                        <button onclick="extrude(10)">Extrude 10mm</button>
+                        <button onclick="extrude(5)">Extrude 5mm</button>
+                        <button onclick="extrude(1)">Extrude 1mm</button>
+                        <button onclick="extrude(-1)">Retract 1mm</button>
+                        <button onclick="extrude(-5)">Retract 5mm</button>
+                        <button onclick="extrude(-10)">Retract 10mm</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Print Control Card -->
+            <div class="card">
+                <h2>Print Control</h2>
+                <div class="button-group">
+                    <button class="success" onclick="resumePrint()">Resume</button>
+                    <button onclick="pausePrint()">Pause</button>
+                    <button class="danger" onclick="stopPrint()">Stop</button>
+                </div>
+                <div style="margin-top: 20px;">
+                    <h3>Files on Printer</h3>
+                    <button onclick="refreshFiles()" style="width: 100%; margin-top: 10px;">Refresh File List</button>
+                    <div class="file-list" id="file-list">
+                        <p style="text-align: center; padding: 20px; color: #999;">Click Refresh to load files</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- File Upload Card -->
+            <div class="card">
+                <h2>Upload G-code</h2>
+                <div class="upload-area" id="upload-area" onclick="document.getElementById('file-input').click()">
+                    <p style="font-size: 3em; margin-bottom: 10px;">📁</p>
+                    <p><strong>Click to select file</strong></p>
+                    <p style="color: #999; margin-top: 10px;">or drag and drop here</p>
+                    <p style="color: #999; font-size: 0.9em; margin-top: 5px;">(.gcode, .gco, .g)</p>
+                </div>
+                <input type="file" id="file-input" accept=".gcode,.gco,.g" onchange="uploadFile(this.files[0])">
+            </div>
+
+            <!-- Terminal Card -->
+            <div class="card" style="grid-column: 1 / -1;">
+                <h2>G-code Terminal</h2>
+                <div class="terminal" id="terminal">
+                    <div>FLSUN QQS-Pro Terminal Ready</div>
+                    <div>Type G-code commands below...</div>
+                </div>
+                <div class="terminal-input">
+                    <input type="text" id="command-input" placeholder="Enter G-code command (e.g. M115)" onkeypress="if(event.key==='Enter') sendCommand()">
+                    <button onclick="sendCommand()">Send</button>
+                    <button onclick="clearTerminal()">Clear</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Auto-refresh status every 2 seconds
+        let statusInterval;
+
+        function startAutoRefresh() {
+            statusInterval = setInterval(updateStatus, 2000);
+            updateStatus();
+        }
+
+        async function updateStatus() {
+            try {
+                // Get printer status
+                const statusResp = await fetch('/api/status');
+                const statusData = await statusResp.json();
+                if (statusData.status === 'ok') {
+                    // Clean up status - remove "M997 " prefix if present
+                    let status = statusData.printer_status;
+                    status = status.replace(/^M997\s+/, '').trim();
+                    document.getElementById('printer-state').textContent = status;
+                }
+
+                // Get temperature
+                const tempResp = await fetch('/api/temperature');
+                const tempData = await tempResp.json();
+                if (tempData.status === 'ok') {
+                    const temps = tempData.temperature;
+                    document.getElementById('temp-hotend').textContent =
+                        `${temps.hotend}°C / ${temps.hotend_target}°C`;
+                    document.getElementById('temp-bed').textContent =
+                        `${temps.bed}°C / ${temps.bed_target}°C`;
+                }
+
+                // Get position
+                const posResp = await fetch('/api/position');
+                const posData = await posResp.json();
+                if (posData.status === 'ok') {
+                    const pos = posData.position;
+                    document.getElementById('pos-x').textContent = pos.x.toFixed(2) + ' mm';
+                    document.getElementById('pos-y').textContent = pos.y.toFixed(2) + ' mm';
+                    document.getElementById('pos-z').textContent = pos.z.toFixed(2) + ' mm';
+                }
+
+                // Get firmware (once)
+                if (document.getElementById('firmware').textContent === '--') {
+                    const fwResp = await fetch('/api/firmware');
+                    const fwData = await fwResp.json();
+                    if (fwData.status === 'ok') {
+                        document.getElementById('firmware').textContent = fwData.firmware;
+                    }
+                }
+            } catch (error) {
+                console.error('Status update error:', error);
+            }
+        }
+
+        async function setHotendTemp(temp) {
+            try {
+                if (temp === undefined) {
+                    temp = parseFloat(document.getElementById('hotend-target').value);
+                }
+                const resp = await fetch('/api/temperature/hotend', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({temp: temp})
+                });
+                const data = await resp.json();
+                if (data.status === 'ok') {
+                    showAlert('Hotend temperature set to ' + temp + '°C', 'success');
+                } else {
+                    showAlert('Error: ' + data.message, 'error');
+                }
+            } catch (error) {
+                showAlert('Error: ' + error.message, 'error');
+            }
+        }
+
+        async function setBedTemp(temp) {
+            try {
+                if (temp === undefined) {
+                    temp = parseFloat(document.getElementById('bed-target').value);
+                }
+                const resp = await fetch('/api/temperature/bed', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({temp: temp})
+                });
+                const data = await resp.json();
+                if (data.status === 'ok') {
+                    showAlert('Bed temperature set to ' + temp + '°C', 'success');
+                } else {
+                    showAlert('Error: ' + data.message, 'error');
+                }
+            } catch (error) {
+                showAlert('Error: ' + error.message, 'error');
+            }
+        }
+
+        async function home(axes) {
+            try {
+                const resp = await fetch('/api/home', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({axes: axes})
+                });
+                const data = await resp.json();
+                if (data.status === 'ok') {
+                    showAlert('Homing ' + (axes || 'all axes'), 'success');
+                } else {
+                    showAlert('Error: ' + data.message, 'error');
+                }
+            } catch (error) {
+                showAlert('Error: ' + error.message, 'error');
+            }
+        }
+
+        async function moveZ(delta) {
+            try {
+                const currentZ = parseFloat(document.getElementById('pos-z').textContent);
+                const newZ = currentZ + delta;
+
+                const resp = await fetch('/api/move', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({z: newZ, feedrate: 1000})
+                });
+                const data = await resp.json();
+                if (data.status === 'ok') {
+                    showAlert('Moving Z to ' + newZ.toFixed(2) + ' mm', 'success');
+                } else {
+                    showAlert('Error: ' + data.message, 'error');
+                }
+            } catch (error) {
+                showAlert('Error: ' + error.message, 'error');
+            }
+        }
+
+        async function extrude(amount) {
+            try {
+                const resp = await fetch('/api/extrude', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({amount: amount})
+                });
+                const data = await resp.json();
+                if (data.status === 'ok') {
+                    const action = amount > 0 ? 'Extruding' : 'Retracting';
+                    showAlert(action + ' ' + Math.abs(amount) + 'mm', 'success');
+                } else {
+                    showAlert('Error: ' + data.message, 'error');
+                }
+            } catch (error) {
+                showAlert('Error: ' + error.message, 'error');
+            }
+        }
+
+        async function pausePrint() {
+            try {
+                const resp = await fetch('/api/print/pause', {method: 'POST'});
+                const data = await resp.json();
+                if (data.status === 'ok') {
+                    showAlert('Print paused', 'success');
+                } else {
+                    showAlert('Error: ' + data.message, 'error');
+                }
+            } catch (error) {
+                showAlert('Error: ' + error.message, 'error');
+            }
+        }
+
+        async function resumePrint() {
+            try {
+                const resp = await fetch('/api/print/resume', {method: 'POST'});
+                const data = await resp.json();
+                if (data.status === 'ok') {
+                    showAlert('Print resumed', 'success');
+                } else {
+                    showAlert('Error: ' + data.message, 'error');
+                }
+            } catch (error) {
+                showAlert('Error: ' + error.message, 'error');
+            }
+        }
+
+        async function stopPrint() {
+            if (!confirm('Are you sure you want to stop the print?')) return;
+
+            try {
+                const resp = await fetch('/api/print/stop', {method: 'POST'});
+                const data = await resp.json();
+                if (data.status === 'ok') {
+                    showAlert('Print stopped', 'success');
+                } else {
+                    showAlert('Error: ' + data.message, 'error');
+                }
+            } catch (error) {
+                showAlert('Error: ' + error.message, 'error');
+            }
+        }
+
+        async function refreshFiles() {
+            try {
+                const resp = await fetch('/api/files');
+                const data = await resp.json();
+
+                const fileList = document.getElementById('file-list');
+                if (data.status === 'ok' && data.files.length > 0) {
+                    fileList.innerHTML = '';
+                    data.files.forEach(file => {
+                        const div = document.createElement('div');
+                        div.className = 'file-item';
+                        div.innerHTML = `
+                            <span>${file}</span>
+                            <button onclick="startPrint('${file}')">Print</button>
+                        `;
+                        fileList.appendChild(div);
+                    });
+                } else if (data.files.length === 0) {
+                    fileList.innerHTML = '<p style="text-align: center; padding: 20px; color: #999;">No files found</p>';
+                } else {
+                    showAlert('Error: ' + data.message, 'error');
+                }
+            } catch (error) {
+                showAlert('Error: ' + error.message, 'error');
+            }
+        }
+
+        async function startPrint(filename) {
+            if (!confirm('Start printing ' + filename + '?')) return;
+
+            try {
+                const resp = await fetch('/api/print/start', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({filename: filename})
+                });
+                const data = await resp.json();
+                if (data.status === 'ok') {
+                    showAlert('Started printing ' + filename, 'success');
+                } else {
+                    showAlert('Error: ' + data.message, 'error');
+                }
+            } catch (error) {
+                showAlert('Error: ' + error.message, 'error');
+            }
+        }
+
+        async function uploadFile(file) {
+            if (!file) return;
+
+            try {
+                const formData = new FormData();
+                formData.append('file', file);
+
+                showAlert('Uploading ' + file.name + '...', 'success');
+
+                const resp = await fetch('/api/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await resp.json();
+
+                if (data.status === 'ok') {
+                    showAlert('File uploaded successfully: ' + data.filename, 'success');
+                    refreshFiles();
+                } else {
+                    showAlert('Upload error: ' + data.message, 'error');
+                }
+            } catch (error) {
+                showAlert('Upload error: ' + error.message, 'error');
+            }
+        }
+
+        async function sendCommand() {
+            const input = document.getElementById('command-input');
+            const command = input.value.trim();
+            if (!command) return;
+
+            addToTerminal('> ' + command);
+
+            try {
+                const resp = await fetch('/api/command', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({command: command})
+                });
+                const data = await resp.json();
+
+                if (data.status === 'ok') {
+                    addToTerminal(data.response || 'ok');
+                } else {
+                    addToTerminal('ERROR: ' + data.message);
+                }
+            } catch (error) {
+                addToTerminal('ERROR: ' + error.message);
+            }
+
+            input.value = '';
+        }
+
+        function addToTerminal(text) {
+            const terminal = document.getElementById('terminal');
+            const div = document.createElement('div');
+            div.textContent = text;
+            terminal.appendChild(div);
+            terminal.scrollTop = terminal.scrollHeight;
+        }
+
+        function clearTerminal() {
+            document.getElementById('terminal').innerHTML = '<div>Terminal cleared</div>';
+        }
+
+        function showAlert(message, type) {
+            const alert = document.getElementById('alert');
+            alert.textContent = message;
+            alert.className = 'alert ' + type;
+            alert.style.display = 'block';
+            setTimeout(() => {
+                alert.style.display = 'none';
+            }, 5000);
+        }
+
+        // Drag and drop support
+        const uploadArea = document.getElementById('upload-area');
+
+        ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+            uploadArea.addEventListener(eventName, preventDefaults, false);
+        });
+
+        function preventDefaults(e) {
+            e.preventDefault();
+            e.stopPropagation();
+        }
+
+        ['dragenter', 'dragover'].forEach(eventName => {
+            uploadArea.addEventListener(eventName, () => {
+                uploadArea.classList.add('dragover');
+            }, false);
+        });
+
+        ['dragleave', 'drop'].forEach(eventName => {
+            uploadArea.addEventListener(eventName, () => {
+                uploadArea.classList.remove('dragover');
+            }, false);
+        });
+
+        uploadArea.addEventListener('drop', (e) => {
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                uploadFile(files[0]);
+            }
+        }, false);
+
+        // Start auto-refresh on page load
+        window.onload = startAutoRefresh;
+    </script>
+</body>
+</html>
