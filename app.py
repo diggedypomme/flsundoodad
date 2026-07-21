@@ -165,7 +165,7 @@ class PacedReader:
 @app.route('/')
 def index():
     """Main control interface."""
-    return render_template('index2.html',
+    return render_template('index.html',
                            default_chunk_kb=DEFAULT_CHUNK_KB,
                            default_chunk_delay_ms=DEFAULT_CHUNK_DELAY_MS)
 
