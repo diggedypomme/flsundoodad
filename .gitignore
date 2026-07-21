@@ -15,8 +15,9 @@ build/
 instance/
 .webassets-cache
 
-# Uploads
+# Uploads and temp folders
 uploads/
+dump/
 
 # IDE
 .vscode/

@@ -10,11 +10,29 @@ Python tool for controlling the FLSUN QQS-Pro 3D printer via its built-in MKS Wi
 
 ## Features
 
+### Core Functionality
 - Send G-code commands over TCP (port 8080)
 - Query printer status, temperature, and position
-- Upload G-code files via HTTP (port 80)
-- Monitor print progress
+- Upload G-code files via HTTP (port 80) with throttled transfers
+- Monitor print progress with real-time updates
 - Control printer operations (home, move, heat, pause, resume, stop)
+
+### Web Interface
+- Real-time status monitoring (updates every 2 seconds)
+- Temperature control for hotend and bed
+- Movement controls with quick Z-axis adjustments
+- File upload with progress bar and configurable transfer rate
+- Drag-and-drop file upload support
+- File management (browse and print files on SD card)
+- G-code terminal for direct command input
+- Configurable printer IP address (persisted to config2.json)
+
+### Upload Reliability
+- **Paced file transfers** to prevent ESP8266 WiFi module overload
+- **Upload progress tracking** showing transfer speed and completion
+- **Print-state detection** - refuses uploads during active prints
+- **Configurable chunk size and delay** for optimal transfer speed
+- **Automatic retry** with reconnection on transient errors
 
 ## Installation
 
@@ -44,12 +62,15 @@ Python tool for controlling the FLSUN QQS-Pro 3D printer via its built-in MKS Wi
 
 2. **Open your browser to:** http://localhost:5000
 
-3. **Control your printer** through the web interface with:
-   - Real-time status monitoring
-   - Temperature control
-   - Movement controls
-   - File upload and management
-   - G-code terminal
+3. **Configure printer IP:** Enter your printer's IP address in the Status panel and click Save
+
+4. **Control your printer** through the web interface:
+   - Real-time status monitoring (auto-updates every 2 seconds)
+   - Temperature control with presets
+   - Movement controls and quick Z-axis adjustments
+   - File upload with progress bar (drag & drop supported)
+   - Browse and print files from SD card
+   - G-code terminal for direct commands
 
 ### Python API
 
@@ -127,11 +148,31 @@ python -m flsun upload model.gcode --print
 python -m flsun monitor
 ```
 
-## Network Configuration
+## Configuration
 
-The printer's IP address can be configured via:
-1. The web interface at the printer's current IP
-2. Connecting to the printer's AP mode (default: 192.168.0.1)
+### Printer IP Address
+
+Configure the printer IP in the web interface (Status panel) or via environment variable:
+
+```bash
+# Windows
+set FLSUN_HOST=192.168.0.123
+python app.py
+
+# Linux/Mac
+export FLSUN_HOST=192.168.0.123
+python app.py
+```
+
+The IP address set in the web UI is saved to `config2.json` and persists across restarts.
+
+### Upload Transfer Rate
+
+If uploads fail or are unreliable, adjust the transfer settings in the web interface:
+- **Chunk size**: Amount of data sent at once (default: 8KB)
+- **Chunk delay**: Pause between chunks (default: 20ms)
+
+Increase the delay (e.g., 50-100ms) if the printer's WiFi module can't keep up.
 
 ## License
 
