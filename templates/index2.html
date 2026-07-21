@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>FLSUN QQS-Pro Control</title>
+    <title>FLSUN QQS-Pro Control v2</title>
     <style>
         * {
             margin: 0;
@@ -166,6 +166,20 @@
             border-color: #667eea;
         }
 
+        .host-input {
+            flex: 1;
+            min-width: 0;
+            padding: 10px;
+            border: 2px solid #ddd;
+            border-radius: 6px;
+            font-size: 1em;
+        }
+
+        .host-input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
         button {
             background: #667eea;
             color: white;
@@ -245,8 +259,72 @@
             color: white;
         }
 
+        .upload-area.disabled {
+            pointer-events: none;
+            opacity: 0.5;
+        }
+
         input[type="file"] {
             display: none;
+        }
+
+        /* Upload progress bar */
+        .progress-wrap {
+            display: none;
+            margin-top: 15px;
+        }
+
+        .progress-track {
+            width: 100%;
+            height: 22px;
+            background: #e9ecef;
+            border-radius: 11px;
+            overflow: hidden;
+        }
+
+        .progress-fill {
+            height: 100%;
+            width: 0%;
+            background: linear-gradient(90deg, #667eea, #764ba2);
+            border-radius: 11px;
+            transition: width 0.4s ease;
+        }
+
+        .progress-text {
+            margin-top: 8px;
+            font-size: 0.9em;
+            color: #666;
+            text-align: center;
+            font-family: 'Courier New', monospace;
+        }
+
+        /* Transfer options */
+        .upload-options {
+            margin-top: 15px;
+        }
+
+        .upload-options summary {
+            cursor: pointer;
+            color: #667eea;
+            font-weight: bold;
+            font-size: 0.95em;
+        }
+
+        .upload-options-row {
+            display: flex;
+            gap: 15px;
+            margin-top: 12px;
+        }
+
+        .upload-options-row label {
+            flex: 1;
+            font-size: 0.85em;
+            color: #666;
+        }
+
+        .upload-options-row input {
+            width: 100%;
+            margin-top: 4px;
         }
 
         .file-list {
@@ -346,6 +424,14 @@
                         <div class="status-label">Firmware</div>
                         <div class="status-value" id="firmware">--</div>
                     </div>
+                    <div class="status-item" style="grid-column: 1 / -1;">
+                        <div class="status-label">Printer IP</div>
+                        <div class="temp-controls" style="margin-top: 5px;">
+                            <input type="text" id="printer-host" class="host-input" placeholder="192.168.0.69"
+                                   onkeypress="if(event.key==='Enter') savePrinterHost()">
+                            <button onclick="savePrinterHost()">Save</button>
+                        </div>
+                    </div>
                     <div class="status-item">
                         <div class="status-label">Position X</div>
                         <div class="status-value" id="pos-x">--</div>
@@ -443,7 +529,30 @@
                     <p style="color: #999; margin-top: 10px;">or drag and drop here</p>
                     <p style="color: #999; font-size: 0.9em; margin-top: 5px;">(.gcode, .gco, .g)</p>
                 </div>
-                <input type="file" id="file-input" accept=".gcode,.gco,.g" onchange="uploadFile(this.files[0])">
+                <input type="file" id="file-input" accept=".gcode,.gco,.g" onchange="uploadFile(this.files[0]); this.value='';">
+
+                <div class="progress-wrap" id="upload-progress-wrap">
+                    <div class="progress-track">
+                        <div class="progress-fill" id="upload-progress-fill"></div>
+                    </div>
+                    <div class="progress-text" id="upload-progress-text">--</div>
+                </div>
+
+                <details class="upload-options">
+                    <summary>Transfer options</summary>
+                    <div class="upload-options-row">
+                        <label>Chunk size (KB)
+                            <input type="number" id="chunk-kb" min="1" max="64" value="{{ default_chunk_kb }}">
+                        </label>
+                        <label>Chunk delay (ms)
+                            <input type="number" id="chunk-delay" min="0" max="2000" value="{{ default_chunk_delay_ms }}">
+                        </label>
+                    </div>
+                    <p style="color: #999; font-size: 0.8em; margin-top: 8px;">
+                        Slows the transfer so the printer's WiFi module can keep up.
+                        If uploads fail, try a bigger delay (e.g. 50–100ms).
+                    </p>
+                </details>
             </div>
 
             <!-- Terminal Card -->
@@ -491,6 +600,10 @@
                     let status = statusData.printer_status;
                     status = status.replace(/^M997\s+/, '').trim();
                     document.getElementById('printer-state').textContent = status;
+                } else if (statusData.status === 'busy') {
+                    // Another client is uploading; server is guarding the link.
+                    document.getElementById('printer-state').textContent = 'UPLOAD IN PROGRESS';
+                    return;
                 }
 
                 // Get temperature
@@ -524,6 +637,46 @@
                 }
             } catch (error) {
                 console.error('Status update error:', error);
+            }
+        }
+
+        // ---- Printer address setting (persisted server-side in config2.json) ----
+
+        async function loadSettings() {
+            try {
+                const resp = await fetch('/api/settings');
+                const data = await resp.json();
+                if (data.status === 'ok') {
+                    document.getElementById('printer-host').value = data.settings.printer_host;
+                }
+            } catch (error) {
+                console.error('Settings load error:', error);
+            }
+        }
+
+        async function savePrinterHost() {
+            const host = document.getElementById('printer-host').value.trim();
+            if (!host) {
+                showAlert('Printer IP cannot be empty', 'error');
+                return;
+            }
+            try {
+                const resp = await fetch('/api/settings', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({printer_host: host})
+                });
+                const data = await resp.json();
+                if (data.status === 'ok') {
+                    showAlert('Printer address saved: ' + data.settings.printer_host, 'success');
+                    // Force a fresh firmware fetch from the new printer.
+                    document.getElementById('firmware').textContent = '--';
+                    updateStatus();
+                } else {
+                    showAlert('Error: ' + data.message, 'error');
+                }
+            } catch (error) {
+                showAlert('Error: ' + error.message, 'error');
             }
         }
 
@@ -688,7 +841,7 @@
                         `;
                         fileList.appendChild(div);
                     });
-                } else if (data.files.length === 0) {
+                } else if (data.status === 'ok') {
                     fileList.innerHTML = '<p style="text-align: center; padding: 20px; color: #999;">No files found</p>';
                 } else {
                     showAlert('Error: ' + data.message, 'error');
@@ -718,17 +871,67 @@
             }
         }
 
+        // ---- Upload with server-side progress ----
+        // The browser->Flask hop is instant on a LAN; the slow leg is
+        // Flask->printer, so the bar tracks /api/upload/progress instead of
+        // the XHR's own upload events.
+
+        let progressTimer = null;
+
+        function formatBytes(b) {
+            if (b >= 1048576) return (b / 1048576).toFixed(2) + ' MB';
+            if (b >= 1024) return (b / 1024).toFixed(1) + ' KB';
+            return b + ' B';
+        }
+
+        function setProgressUI(percent, text) {
+            document.getElementById('upload-progress-wrap').style.display = 'block';
+            document.getElementById('upload-progress-fill').style.width = percent + '%';
+            document.getElementById('upload-progress-text').textContent = text;
+        }
+
+        async function pollUploadProgress() {
+            try {
+                const resp = await fetch('/api/upload/progress');
+                const data = await resp.json();
+                if (data.status !== 'ok') return;
+                const p = data.progress;
+
+                if (p.stage === 'uploading' && p.total > 0) {
+                    const rate = p.rate_bps > 0 ? formatBytes(p.rate_bps) + '/s' : '--';
+                    setProgressUI(p.percent,
+                        `${p.percent}%  (${formatBytes(p.sent)} / ${formatBytes(p.total)}  @ ${rate})`);
+                } else if (p.stage === 'saving' || p.stage === 'preparing') {
+                    setProgressUI(0, p.stage + '…');
+                } else if (p.stage === 'finalizing') {
+                    setProgressUI(100, 'finalizing… (re-initialising SD card)');
+                }
+            } catch (error) {
+                // Polling is best-effort; the upload itself reports errors.
+            }
+        }
+
         async function uploadFile(file) {
             if (!file) return;
+            if (uploadInProgress) {
+                showAlert('An upload is already in progress', 'error');
+                return;
+            }
 
             // Go quiet on the gcode port for the whole transfer so we don't
-            // fight the WiFi module while it writes to SD.
+            // fight the WiFi module while it writes to SD. (The server also
+            // enforces this for all clients.)
             uploadInProgress = true;
             stopAutoRefresh();
+            document.getElementById('upload-area').classList.add('disabled');
+            setProgressUI(0, 'starting…');
+            progressTimer = setInterval(pollUploadProgress, 500);
 
             try {
                 const formData = new FormData();
                 formData.append('file', file);
+                formData.append('chunk_kb', document.getElementById('chunk-kb').value);
+                formData.append('chunk_delay_ms', document.getElementById('chunk-delay').value);
 
                 // persist=true: keep this visible for the whole transfer
                 // instead of auto-hiding after 5s mid-upload.
@@ -741,15 +944,21 @@
                 const data = await resp.json();
 
                 if (data.status === 'ok') {
+                    setProgressUI(100, 'done');
                     showAlert('File uploaded successfully: ' + data.filename, 'success');
                     refreshFiles();
                 } else {
+                    setProgressUI(0, 'failed');
                     showAlert('Upload error: ' + data.message, 'error');
                 }
             } catch (error) {
+                setProgressUI(0, 'failed');
                 showAlert('Upload error: ' + error.message, 'error');
             } finally {
-                // Resume live status polling.
+                clearInterval(progressTimer);
+                progressTimer = null;
+                document.getElementById('upload-area').classList.remove('disabled');
+                // Leave the final bar state visible; resume live polling.
                 uploadInProgress = false;
                 startAutoRefresh();
             }
@@ -842,7 +1051,10 @@
         }, false);
 
         // Start auto-refresh on page load
-        window.onload = startAutoRefresh;
+        window.onload = () => {
+            loadSettings();
+            startAutoRefresh();
+        };
     </script>
 </body>
 </html>

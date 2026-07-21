@@ -4,6 +4,7 @@ from flask import Flask, render_template, request, jsonify, send_from_directory
 from werkzeug.utils import secure_filename
 from pathlib import Path
 import os
+import threading
 from flsun import FlsunClient
 from flsun.exceptions import FlsunError
 
@@ -17,6 +18,12 @@ app.config['UPLOAD_FOLDER'].mkdir(exist_ok=True)
 
 # Global printer client (will be created on first request)
 printer = None
+
+# Set while a file upload is in progress. The MKS WiFi module and the gcode
+# TCP port both talk to the mainboard, so polling status during a large SD
+# write can cause the upload to fail ("transfer error"). While this is set,
+# the status/temperature/position endpoints stay off the printer.
+upload_active = threading.Event()
 
 # Printer configuration
 PRINTER_HOST = os.environ.get('FLSUN_HOST', '192.168.0.69')
@@ -45,6 +52,8 @@ def index():
 @app.route('/api/status')
 def api_status():
     """Get printer status."""
+    if upload_active.is_set():
+        return jsonify({'status': 'busy', 'message': 'upload in progress'})
     try:
         p = get_printer()
         status = p.get_status()
@@ -56,6 +65,8 @@ def api_status():
 @app.route('/api/temperature')
 def api_temperature():
     """Get current temperatures."""
+    if upload_active.is_set():
+        return jsonify({'status': 'busy', 'message': 'upload in progress'})
     try:
         p = get_printer()
         temps = p.get_temperature()
@@ -67,6 +78,8 @@ def api_temperature():
 @app.route('/api/position')
 def api_position():
     """Get current position."""
+    if upload_active.is_set():
+        return jsonify({'status': 'busy', 'message': 'upload in progress'})
     try:
         p = get_printer()
         pos = p.get_position()
@@ -253,18 +266,33 @@ def api_upload():
         temp_path = app.config['UPLOAD_FOLDER'] / filename
         file.save(temp_path)
 
-        # Upload to printer
-        p = get_printer()
-        p.upload_file(temp_path, filename=filename)
+        # Block status polling from touching the printer for the whole write.
+        upload_active.set()
+        try:
+            # Upload to printer
+            p = get_printer()
+            p.upload_file(temp_path, filename=filename)
 
-        # Clean up temp file
-        temp_path.unlink()
+            # The mainboard caches the SD directory, so a freshly uploaded file
+            # won't appear in M20 until the card is re-initialised. Re-init here
+            # so the UI's file list shows it immediately after upload.
+            try:
+                p.send_command('M21')
+            except FlsunError:
+                pass
+        finally:
+            upload_active.clear()
+            # Clean up temp file
+            if temp_path.exists():
+                temp_path.unlink()
 
         return jsonify({'status': 'ok', 'filename': filename})
 
     except FlsunError as e:
+        upload_active.clear()
         return jsonify({'status': 'error', 'message': str(e)}), 500
     except Exception as e:
+        upload_active.clear()
         return jsonify({'status': 'error', 'message': f'Upload error: {str(e)}'}), 500
 
 

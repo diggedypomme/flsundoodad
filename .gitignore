@@ -34,3 +34,9 @@ Thumbs.db
 
 # Environment variables
 .env
+
+# Per-machine UI settings (printer IP etc.)
+config2.json
+
+
+documentation/PRINTERUPLOAD/*

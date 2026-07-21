@@ -3,6 +3,7 @@
 import socket
 import time
 import re
+import threading
 import requests
 from pathlib import Path
 from typing import Optional, Dict, Any, List, Union
@@ -47,6 +48,11 @@ class FlsunClient:
         self.timeout = timeout
         self._socket: Optional[socket.socket] = None
         self._connected = False
+        # Serialize access to the single shared socket. The web UI polls
+        # status/temp/position every couple of seconds from Flask worker
+        # threads, so without this lock concurrent commands interleave their
+        # reads and get each other's replies.
+        self._lock = threading.RLock()
 
         if auto_connect:
             self.connect()
@@ -117,68 +123,104 @@ class FlsunClient:
         if not self._connected or not self._socket:
             raise FlsunConnectionError("Not connected to printer")
 
-        # Set custom timeout if provided
-        original_timeout = None
-        if timeout is not None:
-            original_timeout = self._socket.gettimeout()
-            self._socket.settimeout(timeout)
+        # Hold the lock for the whole send+read cycle so a concurrent command
+        # (e.g. the UI's status poll) can't read this command's reply.
+        with self._lock:
+            # Set custom timeout if provided
+            original_timeout = None
+            if timeout is not None:
+                original_timeout = self._socket.gettimeout()
+                self._socket.settimeout(timeout)
 
+            try:
+                # Discard any stale bytes left over from a previous command
+                # whose (slow) reply arrived after its read had timed out.
+                self._drain()
+
+                # Send command
+                cmd_bytes = f"{command}\n".encode('utf-8')
+                self._socket.sendall(cmd_bytes)
+
+                if not wait_for_ok:
+                    return ""
+
+                # Read response
+                response = self._read_response()
+                return response
+
+            except socket.timeout:
+                raise FlsunTimeoutError(f"Command '{command}' timed out")
+            except socket.error as e:
+                self._connected = False
+                raise FlsunConnectionError(f"Socket error: {e}")
+            finally:
+                # Restore original timeout
+                if original_timeout is not None and self._socket:
+                    self._socket.settimeout(original_timeout)
+
+    def _drain(self) -> None:
+        """Discard any buffered data left in the socket from a prior reply.
+
+        The MKS firmware sometimes answers slower than the read timeout, so a
+        late reply can still be sitting in the socket buffer when the next
+        command is sent. Reading it off first keeps replies aligned with the
+        commands that asked for them.
+        """
+        if not self._socket:
+            return
+        self._socket.setblocking(False)
         try:
-            # Send command
-            cmd_bytes = f"{command}\n".encode('utf-8')
-            self._socket.sendall(cmd_bytes)
-
-            if not wait_for_ok:
-                return ""
-
-            # Read response
-            response = self._read_response()
-            return response
-
-        except socket.timeout:
-            raise FlsunTimeoutError(f"Command '{command}' timed out")
-        except socket.error as e:
-            self._connected = False
-            raise FlsunConnectionError(f"Socket error: {e}")
+            while True:
+                try:
+                    if not self._socket.recv(4096):
+                        break
+                except (BlockingIOError, socket.error):
+                    break
         finally:
-            # Restore original timeout
-            if original_timeout is not None and self._socket:
-                self._socket.settimeout(original_timeout)
+            self._socket.settimeout(self.timeout)
 
-    def _read_response(self, max_lines: int = 100) -> str:
-        """Read response from printer until 'ok' is received.
+    def _read_response(self, idle: float = 0.25) -> str:
+        """Read a full reply from the printer.
 
-        Args:
-            max_lines: Maximum number of lines to read
+        This firmware acks a command with 'ok' *before* it streams the reply
+        body (e.g. an M20 file list) and finishes with a trailing '0' line, so
+        we can't just stop at the first 'ok'. Instead we read until the stream
+        goes quiet for ``idle`` seconds, which captures the whole reply for
+        both ack-only commands and ones that stream data.
 
         Returns:
-            Response text (without 'ok')
+            Response text (leading 'ok' ack and trailing '0' terminator removed)
         """
         if not self._socket:
             raise FlsunConnectionError("Socket not initialized")
 
-        lines = []
-        for _ in range(max_lines):
-            try:
-                data = self._socket.recv(4096)
-                if not data:
-                    break
+        chunks = []
+        deadline = time.time() + self.timeout
+        self._socket.settimeout(idle)
+        try:
+            while True:
+                try:
+                    data = self._socket.recv(4096)
+                    if not data:
+                        break
+                    chunks.append(data.decode('utf-8', errors='ignore'))
+                except socket.timeout:
+                    # Quiet for `idle` seconds. If we already have a reply we're
+                    # done; otherwise keep waiting until the overall timeout.
+                    if chunks or time.time() >= deadline:
+                        break
+        finally:
+            self._socket.settimeout(self.timeout)
 
-                text = data.decode('utf-8', errors='ignore')
-                lines.append(text)
+        full_response = ''.join(chunks)
 
-                # Check if we received 'ok'
-                if 'ok' in text:
-                    break
-            except socket.timeout:
-                break
-
-        # Join all received text
-        full_response = ''.join(lines)
-
-        # Remove 'ok' and clean up
-        response = full_response.replace('ok', '').strip()
-        return response
+        # Drop the leading 'ok' acknowledgement line and the trailing '0'
+        # terminator line, but don't blindly delete 'ok' everywhere (it can
+        # appear inside filenames).
+        cleaned = re.sub(r'^\s*ok\b[^\n]*\n?', '', full_response, count=1)
+        cleaned = re.sub(r'(?:^|\n)\s*0\s*$', '', cleaned)
+        cleaned = re.sub(r'(?:^|\n)\s*ok\s*$', '', cleaned)
+        return cleaned.strip()
 
     def get_status(self) -> str:
         """Get current printer state.
@@ -370,14 +412,17 @@ class FlsunClient:
         """Stop current print (M0)."""
         self.send_command('M0')
 
-    def get_file_list(self, path: str = '') -> List[str]:
-        """Get list of files on SD card.
+    def get_file_list(self, path: str = '1:/') -> List[str]:
+        """Get list of files on the SD card.
+
+        On this printer's MKS/Robin firmware the SD card is volume ``1:/``.
+        A bare ``M20`` returns ``0`` (nothing); the volume must be given.
 
         Args:
-            path: Directory path (default: root)
+            path: Directory path (default: SD card root ``1:/``)
 
         Returns:
-            List of filenames
+            List of filenames (directories are excluded)
 
         Example:
             >>> client.get_file_list()
@@ -395,12 +440,15 @@ class FlsunClient:
 
         for line in response.split('\n'):
             line = line.strip()
-            # Skip empty lines, "Begin file list", "End file list", and "0"
-            if (line and
-                not line.startswith('Begin') and
-                not line.startswith('End') and
-                line != '0'):
-                files.append(line)
+            if not line or line == '0':
+                continue
+            # Skip the "Begin file list" / "End file list" markers
+            if line.startswith('Begin') or line.startswith('End'):
+                continue
+            # Skip directory entries (firmware marks folders with a .DIR suffix)
+            if line.upper().endswith('.DIR'):
+                continue
+            files.append(line)
 
         return files
 
@@ -498,14 +546,23 @@ class FlsunClient:
         with open(filepath, 'rb') as f:
             file_content = f.read()
 
-        # Upload via HTTP POST to /upload with X-Filename as URL parameter
+        # Upload via HTTP POST to /upload with X-Filename as URL parameter.
+        # The MKS WiFi module requires the octet-stream content type and reads
+        # the target SD filename from the X-Filename query parameter. (Matches
+        # the proven MKS-WIFI_PS_uploader tool.)
         url = f"http://{self.host}/upload"
         params = {
             'X-Filename': filename
         }
+        headers = {
+            'Content-Type': 'application/octet-stream',
+            'Connection': 'keep-alive',
+        }
 
         try:
-            response = requests.post(url, params=params, data=file_content, timeout=60)
+            response = requests.post(
+                url, params=params, data=file_content, headers=headers, timeout=120
+            )
 
             if response.status_code == 200:
                 return True
